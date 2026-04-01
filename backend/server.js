@@ -1,46 +1,121 @@
-require('dotenv').config();
-
+const path = require('path');
+const dotenv = require('dotenv');
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const Tarefa = require('./models/Tarefa');
 
+const envPath = path.resolve(__dirname, '.env');
+const dotenvResult = dotenv.config({ path: envPath });
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
 
+function describeMongoUri(uri) {
+  if (!uri) {
+    return { present: false };
+  }
+
+  try {
+    const parsed = new URL(uri);
+
+    return {
+      present: true,
+      protocol: parsed.protocol,
+      host: parsed.host,
+      database: parsed.pathname.replace(/^\//, '') || '(default)',
+      hasQuery: Boolean(parsed.search)
+    };
+  } catch (error) {
+    return {
+      present: true,
+      parseError: error.message
+    };
+  }
+}
+
+console.log('[startup] cwd:', process.cwd());
+console.log('[startup] __dirname:', __dirname);
+console.log('[startup] NODE_ENV:', process.env.NODE_ENV || '(not set)');
+console.log('[startup] PORT:', PORT);
+console.log('[startup] backend/.env loaded:', !dotenvResult.error);
+if (dotenvResult.error) {
+  console.log('[startup] dotenv info:', dotenvResult.error.message);
+}
+console.log('[startup] MONGODB_URI present:', Boolean(MONGODB_URI));
+console.log('[startup] MONGODB_URI summary:', describeMongoUri(MONGODB_URI));
+
 app.use(cors());
 app.use(express.json());
 
-if (!MONGODB_URI) {
-  throw new Error('MONGODB_URI nao definida');
-}
-
-mongoose.connect(
-  MONGODB_URI,
-  { useNewUrlParser: true, useUnifiedTopology: true }
-)
-.then(() => console.log('MongoDB Atlas conectado'))
-.catch(err => console.log(err));
-
-app.post('/tarefas', async(req, res) => {
-  const t = await Tarefa.create(req.body);
-  res.json(t);
+mongoose.connection.on('connecting', () => {
+  console.log('[mongoose] connecting');
 });
 
-app.get('/tarefas', async(req, res) => {
-  const t = await Tarefa.find();
-  res.json(t);
+mongoose.connection.on('connected', () => {
+  console.log('[mongoose] connected');
 });
 
-app.put('/tarefas/:id', async(req, res) => {
-  const t = await Tarefa.findByIdAndUpdate(req.params.id, req.body, { new: true });
-  res.json(t);
+mongoose.connection.on('open', () => {
+  console.log('[mongoose] open');
 });
 
-app.delete('/tarefas/:id', async(req, res) => {
+mongoose.connection.on('disconnected', () => {
+  console.log('[mongoose] disconnected');
+});
+
+mongoose.connection.on('error', (error) => {
+  console.error('[mongoose] connection error:', error.message);
+});
+
+app.post('/tarefas', async (req, res) => {
+  const tarefa = await Tarefa.create(req.body);
+  res.json(tarefa);
+});
+
+app.get('/tarefas', async (req, res) => {
+  const tarefas = await Tarefa.find();
+  res.json(tarefas);
+});
+
+app.put('/tarefas/:id', async (req, res) => {
+  const tarefa = await Tarefa.findByIdAndUpdate(req.params.id, req.body, { new: true });
+  res.json(tarefa);
+});
+
+app.delete('/tarefas/:id', async (req, res) => {
   await Tarefa.findByIdAndDelete(req.params.id);
   res.json({ ok: true });
 });
 
-app.listen(PORT, () => console.log('Servidor rodando'));
+app.use((error, req, res, next) => {
+  console.error('[request] failure', {
+    method: req.method,
+    path: req.originalUrl,
+    errorName: error.name,
+    errorMessage: error.message,
+    mongoReadyState: mongoose.connection.readyState
+  });
+
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+async function startServer() {
+  if (!MONGODB_URI) {
+    throw new Error('MONGODB_URI nao definida');
+  }
+
+  console.log('[startup] trying MongoDB connection...');
+  await mongoose.connect(MONGODB_URI);
+  console.log('[startup] MongoDB connection finished successfully');
+
+  app.listen(PORT, () => {
+    console.log(`[startup] servidor rodando na porta ${PORT}`);
+  });
+}
+
+startServer().catch((error) => {
+  console.error('[startup] fatal error:', error);
+  process.exit(1);
+});
