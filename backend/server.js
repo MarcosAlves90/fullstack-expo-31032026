@@ -12,6 +12,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
 
+function isValidObjectId(id) {
+  return mongoose.Types.ObjectId.isValid(id);
+}
+
 function describeMongoUri(uri) {
   if (!uri) {
     return { present: false };
@@ -80,12 +84,34 @@ app.get('/tarefas', async (req, res) => {
 });
 
 app.put('/tarefas/:id', async (req, res) => {
+  if (!isValidObjectId(req.params.id)) {
+    return res.status(400).json({ error: 'ID de tarefa invalido' });
+  }
+
   const tarefa = await Tarefa.findByIdAndUpdate(req.params.id, req.body, { new: true });
+
+  if (!tarefa) {
+    return res.status(404).json({ error: 'Tarefa nao encontrada' });
+  }
+
   res.json(tarefa);
 });
 
+app.delete('/tarefas', async (req, res) => {
+  res.status(400).json({ error: 'Informe o ID da tarefa na URL' });
+});
+
 app.delete('/tarefas/:id', async (req, res) => {
-  await Tarefa.findByIdAndDelete(req.params.id);
+  if (!isValidObjectId(req.params.id)) {
+    return res.status(400).json({ error: 'ID de tarefa invalido' });
+  }
+
+  const tarefa = await Tarefa.findByIdAndDelete(req.params.id);
+
+  if (!tarefa) {
+    return res.status(404).json({ error: 'Tarefa nao encontrada' });
+  }
+
   res.json({ ok: true });
 });
 
@@ -97,6 +123,10 @@ app.use((error, req, res, next) => {
     errorMessage: error.message,
     mongoReadyState: mongoose.connection.readyState
   });
+
+  if (error.name === 'CastError') {
+    return res.status(400).json({ error: 'ID de tarefa invalido' });
+  }
 
   res.status(500).json({ error: 'Internal server error' });
 });
