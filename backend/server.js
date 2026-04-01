@@ -79,7 +79,7 @@ app.post('/tarefas', async (req, res) => {
 });
 
 app.get('/tarefas', async (req, res) => {
-  const tarefas = await Tarefa.find();
+  const tarefas = await Tarefa.find().sort({ createdAt: -1, _id: -1 });
   res.json(tarefas);
 });
 
@@ -88,7 +88,10 @@ app.put('/tarefas/:id', async (req, res) => {
     return res.status(400).json({ error: 'ID de tarefa invalido' });
   }
 
-  const tarefa = await Tarefa.findByIdAndUpdate(req.params.id, req.body, { new: true });
+  const tarefa = await Tarefa.findByIdAndUpdate(req.params.id, req.body, {
+    new: true,
+    runValidators: true
+  });
 
   if (!tarefa) {
     return res.status(404).json({ error: 'Tarefa nao encontrada' });
