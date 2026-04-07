@@ -1,11 +1,21 @@
 const mongoose = require('mongoose');
 
-const TarefaSchema = new mongoose.Schema(
+// Schema enxuto: título identifica a tarefa e concluída controla o status.
+const tarefaSchema = new mongoose.Schema(
   {
-    titulo: { type: String, required: true, trim: true },
-    concluida: { type: Boolean, default: false }
+    titulo: {
+      type: String,
+      required: [true, 'Informe o título da tarefa.'],
+      trim: true
+    },
+    concluida: {
+      type: Boolean,
+      default: false
+    }
   },
-  { timestamps: true }
+  {
+    timestamps: true
+  }
 );
 
-module.exports = mongoose.model('Tarefa', TarefaSchema);
+module.exports = mongoose.model('Tarefa', tarefaSchema);

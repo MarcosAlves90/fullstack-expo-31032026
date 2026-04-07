@@ -5,18 +5,16 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const Tarefa = require('./models/Tarefa');
 
-const envPath = path.resolve(__dirname, '.env');
-const dotenvResult = dotenv.config({ path: envPath });
+// Carrega o .env do backend explicitamente para evitar dependência do diretório atual.
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
+const TASKS_ROUTE = '/tarefas';
+const TASKS_SORT = { createdAt: -1, _id: -1 };
 
-function isValidObjectId(id) {
-  return mongoose.Types.ObjectId.isValid(id);
-}
-
-function describeMongoUri(uri) {
+function summarizeMongoUri(uri) {
   if (!uri) {
     return { present: false };
   }
@@ -39,85 +37,91 @@ function describeMongoUri(uri) {
   }
 }
 
-console.log('[startup] cwd:', process.cwd());
-console.log('[startup] __dirname:', __dirname);
-console.log('[startup] NODE_ENV:', process.env.NODE_ENV || '(not set)');
-console.log('[startup] PORT:', PORT);
-console.log('[startup] backend/.env loaded:', !dotenvResult.error);
-if (dotenvResult.error) {
-  console.log('[startup] dotenv info:', dotenvResult.error.message);
+function isValidTaskId(id) {
+  return mongoose.Types.ObjectId.isValid(id);
 }
-console.log('[startup] MONGODB_URI present:', Boolean(MONGODB_URI));
-console.log('[startup] MONGODB_URI summary:', describeMongoUri(MONGODB_URI));
 
+function validateTaskId(req, res, next) {
+  if (!isValidTaskId(req.params.id)) {
+    return res.status(400).json({ error: 'ID de tarefa inválido' });
+  }
+
+  next();
+}
+
+function logStartupSummary() {
+  console.log('[startup] PORT:', PORT);
+  console.log('[startup] MONGODB_URI summary:', summarizeMongoUri(MONGODB_URI));
+}
+
+function registerMongoLogs() {
+  mongoose.connection.on('connecting', () => {
+    console.log('[mongoose] connecting');
+  });
+
+  mongoose.connection.on('connected', () => {
+    console.log('[mongoose] connected');
+  });
+
+  mongoose.connection.on('disconnected', () => {
+    console.log('[mongoose] disconnected');
+  });
+
+  mongoose.connection.on('error', (error) => {
+    console.error('[mongoose] connection error:', error.message);
+  });
+}
+
+function getValidationMessage(error) {
+  return Object.values(error.errors || {})
+    .map((item) => item.message)
+    .filter(Boolean)
+    .join(', ');
+}
+
+// Middlewares globais da API.
 app.use(cors());
 app.use(express.json());
 
-mongoose.connection.on('connecting', () => {
-  console.log('[mongoose] connecting');
-});
-
-mongoose.connection.on('connected', () => {
-  console.log('[mongoose] connected');
-});
-
-mongoose.connection.on('open', () => {
-  console.log('[mongoose] open');
-});
-
-mongoose.connection.on('disconnected', () => {
-  console.log('[mongoose] disconnected');
-});
-
-mongoose.connection.on('error', (error) => {
-  console.error('[mongoose] connection error:', error.message);
-});
-
-app.post('/tarefas', async (req, res) => {
+// Rotas CRUD da entidade principal do projeto.
+app.post(TASKS_ROUTE, async (req, res) => {
   const tarefa = await Tarefa.create(req.body);
-  res.json(tarefa);
+  return res.status(201).json(tarefa);
 });
 
-app.get('/tarefas', async (req, res) => {
-  const tarefas = await Tarefa.find().sort({ createdAt: -1, _id: -1 });
-  res.json(tarefas);
+app.get(TASKS_ROUTE, async (req, res) => {
+  const tarefas = await Tarefa.find().sort(TASKS_SORT);
+  return res.json(tarefas);
 });
 
-app.put('/tarefas/:id', async (req, res) => {
-  if (!isValidObjectId(req.params.id)) {
-    return res.status(400).json({ error: 'ID de tarefa invalido' });
-  }
-
+app.put(`${TASKS_ROUTE}/:id`, validateTaskId, async (req, res) => {
   const tarefa = await Tarefa.findByIdAndUpdate(req.params.id, req.body, {
     new: true,
     runValidators: true
   });
 
   if (!tarefa) {
-    return res.status(404).json({ error: 'Tarefa nao encontrada' });
+    return res.status(404).json({ error: 'Tarefa não encontrada' });
   }
 
-  res.json(tarefa);
+  return res.json(tarefa);
 });
 
-app.delete('/tarefas', async (req, res) => {
-  res.status(400).json({ error: 'Informe o ID da tarefa na URL' });
+app.delete(TASKS_ROUTE, (req, res) => {
+  return res.status(400).json({ error: 'Informe o ID da tarefa na URL' });
 });
 
-app.delete('/tarefas/:id', async (req, res) => {
-  if (!isValidObjectId(req.params.id)) {
-    return res.status(400).json({ error: 'ID de tarefa invalido' });
-  }
-
+app.delete(`${TASKS_ROUTE}/:id`, validateTaskId, async (req, res) => {
   const tarefa = await Tarefa.findByIdAndDelete(req.params.id);
 
   if (!tarefa) {
-    return res.status(404).json({ error: 'Tarefa nao encontrada' });
+    return res.status(404).json({ error: 'Tarefa não encontrada' });
   }
 
-  res.json({ ok: true });
+  return res.json({ ok: true });
 });
 
+// Traduz erros comuns do Mongo/Mongoose para respostas HTTP previsíveis.
 app.use((error, req, res, next) => {
   console.error('[request] failure', {
     method: req.method,
@@ -128,24 +132,39 @@ app.use((error, req, res, next) => {
   });
 
   if (error.name === 'CastError') {
-    return res.status(400).json({ error: 'ID de tarefa invalido' });
+    return res.status(400).json({ error: 'ID de tarefa inválido' });
   }
 
-  res.status(500).json({ error: 'Internal server error' });
+  if (error.name === 'ValidationError') {
+    return res.status(400).json({
+      error: getValidationMessage(error) || 'Dados da tarefa inválidos'
+    });
+  }
+
+  return res.status(500).json({ error: 'Internal server error' });
 });
 
-async function startServer() {
+async function connectDatabase() {
   if (!MONGODB_URI) {
-    throw new Error('MONGODB_URI nao definida');
+    throw new Error('MONGODB_URI não definida');
   }
 
-  console.log('[startup] trying MongoDB connection...');
+  console.log('[startup] connecting to MongoDB...');
   await mongoose.connect(MONGODB_URI);
-  console.log('[startup] MongoDB connection finished successfully');
+  console.log('[startup] MongoDB connected');
+}
 
+function startHttpServer() {
   app.listen(PORT, () => {
     console.log(`[startup] servidor rodando na porta ${PORT}`);
   });
+}
+
+async function startServer() {
+  logStartupSummary();
+  registerMongoLogs();
+  await connectDatabase();
+  startHttpServer();
 }
 
 startServer().catch((error) => {
